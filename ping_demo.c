@@ -17,8 +17,9 @@
 #include "qosa_def.h"
 #include "qosa_log.h"
 #include "qcm_ping_app.h"
-#include "unirtos_app_init_registry.h"
-
+#if (defined(CONFIG_QOSA_BK7238_PLATFORM_FUNC) ||defined(CONFIG_QOSA_BK7258_PLATFORM_FUNC) || defined(CONFIG_QOSA_ECR6600_PLATFORM_FUNC)) 
+#include "qosa_wlan.h"
+#endif
 /*===========================================================================
  *  Macro Definition
  ===========================================================================*/
@@ -64,7 +65,66 @@ static qosa_msgq_t g_ping_demo_msg = QOSA_NULL;
 /*===========================================================================
  *  Static API Functions
  ===========================================================================*/
+#if (defined(CONFIG_QOSA_BK7258_PLATFORM_FUNC) || defined(CONFIG_QOSA_BK7238_PLATFORM_FUNC) || defined(CONFIG_QOSA_ECR6600_PLATFORM_FUNC)) 
 
+static qosa_sem_t  wifi_sem = QOSA_NULL;
+
+static void qcm_socket_app_wifi_event_cb(void *param)
+{
+    qosa_wlan_event_msg_t  *event_info = (qosa_wlan_event_msg_t *)param;
+
+    switch(event_info->event)
+    {
+    case QOSA_WLAN_EVT_STA_CONNECTED:
+        {
+            QLOGI("wlan connected!\n");
+        }
+        break;
+    case QOSA_WLAN_EVT_STA_GOT_IP:
+        {
+            QLOGI("wlan got ip!\n");
+            QLOGI("wifi_sem=%p\n", wifi_sem);
+            if(wifi_sem != QOSA_NULL)
+                qosa_sem_release(wifi_sem);
+        }
+        break;
+    case QOSA_WLAN_EVT_STA_DISCONNECTED:
+        {
+            QLOGI("wlan disconnected!\n");            
+        }
+        break;
+    case QOSA_WLAN_EVT_STA_PASSWORD_WRONG:
+    case QOSA_WLAN_EVT_STA_NO_AP_FOUND:
+    case QOSA_WLAN_EVT_STA_CONNECT_FAILED:
+        {
+            QLOGI("wlan connect failed!\n");
+        }
+        break;
+    default:
+        break;
+    }
+}
+static int qcm_socket_app_wifi_active(void)
+{
+    qosa_wlan_network_t  wlan_cfg = {0};
+    qosa_wlan_sta_config_t sta_cfg = {0};
+    qosa_wlan_driver_init();
+
+    sta_cfg.dhcp_enabled = QOSA_TRUE;    
+    qosa_memcpy(sta_cfg.ssid, "cbq666", qosa_strlen("cbq666"));
+    qosa_memcpy(sta_cfg.pwd, "12345678", qosa_strlen("12345678"));
+    sta_cfg.ip.ipv4.addr_type = QOSA_WLAN_ADDR_TYPE_DHCP;
+
+    wlan_cfg.mode = QOSA_WLAN_MODE_STA;
+    wlan_cfg.sta_cfg = &sta_cfg;
+    
+    qosa_wlan_register_status_cb(qcm_socket_app_wifi_event_cb);
+
+    qosa_wlan_start(&wlan_cfg);
+    
+    return 0;
+}
+#endif
 /**
  * @brief Ping result callback function
  *
@@ -190,7 +250,19 @@ static void unir_ping_demo_process(void *ctx)
     QLOGV("PING demo_process start");
     // Wait 10 seconds to facilitate log capture and network registration on boot
     qosa_task_sleep_sec(10);
-
+#if (defined(CONFIG_QOSA_BK7238_PLATFORM_FUNC) ||defined(CONFIG_QOSA_BK7258_PLATFORM_FUNC) || defined(CONFIG_QOSA_ECR6600_PLATFORM_FUNC)) 
+    
+    qosa_sem_create(&wifi_sem, 0);
+    QOSA_ASSERT(wifi_sem != QOSA_NULL);
+    QLOGI("wifi_sem=%p\n", wifi_sem);
+    if(qcm_socket_app_wifi_active() != 0)
+    {
+        QLOGE("wlan error");
+        return;
+    }
+    qosa_sem_wait(wifi_sem, QOSA_WAIT_FOREVER);
+    QLOGI("wlan actived!\n");
+#endif
     // Assign values for ping operation data size, count, timeout; use default values if no parameters
     ping_options.num_data_bytes = 64;
     ping_options.num_pings = UNIR_PING_DEMO_CNT;
@@ -198,7 +270,11 @@ static void unir_ping_demo_process(void *ctx)
     ping_options.ttl = UNIR_PING_DEMO_TTL;
 
     // Start ping operation, specifying PDPID, SIM card ID, server address and other parameters
+#if (defined(CONFIG_QOSA_BK7238_PLATFORM_FUNC) ||defined(CONFIG_QOSA_BK7258_PLATFORM_FUNC) || defined(CONFIG_QOSA_ECR6600_PLATFORM_FUNC))   
+    ret = qcm_ping_start(UNIR_PING_DEMO_SERVER, &ping_options, unir_ping_result_cb, QOSA_NULL);
+#else
     ret = qcm_ping_start(UNIR_PING_DEMO_PDPID, UNIR_PING_DEMO_SIMID, UNIR_PING_DEMO_SERVER, &ping_options, unir_ping_result_cb, QOSA_NULL);
+#endif
     if (ret != QCM_PING_OK)
     {
         QLOGE("ping start err =%x", ret);
